@@ -1,7 +1,13 @@
-## conduce - be conducive to; "The use of computers in the classroom lead to better writing"
+## conduce -
+#    be conducive to;
+#    "The use of computers in the classroom lead to better writing"
 #
 # a model+view component for rails that combines the conductor and presenter
 # pattern via a model capable of generating view-centric methods
+#
+# think of conducers as active_record objects - which they are - which can be
+# adulterated with bits and pieces that make using them in a specific
+# controller/views more streamlined.
 #
 
 ## in a controller
@@ -20,47 +26,113 @@
 module Conducer
 # version
 #
-  Conducer::VERSION = '0.0.1'
+  Conducer::VERSION = '0.0.2'
 
   def Conducer.version() Conducer::VERSION end
 
 # base class
 #
   class Base < (defined?(::ActiveRecord::Base) ? ::ActiveRecord::Base : Object)
-    def Base.inherited(other)
-      other.module_eval(&::Conducer::Mixin)
+    def Base.inherited(other, &block)
+      other.module_eval(&::Conducer::Base::Methods)
       super
+    end
+
+    def Base.for(controller, *args, &block)
+      new(controller, *args, &block)
+    end
+
+  # mixin used when building a conducer class
+  #
+    Methods = lambda do
+      table_name = name.sub(/Conducer$/, '').underscore.pluralize
+      set_table_name table_name
+
+      def initialize(*args, &block)
+        controllers, args = args.partition{|arg| arg.is_a?(ActionController::Base)}
+
+        super(*args, &block)
+
+        unless controllers.blank?
+          controller = controllers.shift
+          self.controller = controller
+        else
+          mock_controller!
+        end
+      end
+
+      def controller
+        @controller
+      end
+
+      def controller=(controller)
+        @controller = controller
+      ensure
+        default_url_options[:protocol] = @controller.request.protocol
+        default_url_options[:host] = @controller.request.host
+        default_url_options[:port] = @controller.request.port
+      end
+
+    ## TODO - wtf - there must be an easier way....  please help.
+    #
+      def mock_controller!
+        require 'action_dispatch/testing/test_request.rb'
+        require 'action_dispatch/testing/test_response.rb'
+        @store = ActiveSupport::Cache::MemoryStore.new
+        @controller = ApplicationController.new
+        @controller.perform_caching = true
+        @controller.cache_store = @store
+        @request = ActionDispatch::TestRequest.new
+        @response = ActionDispatch::TestResponse.new
+        @controller.request = @request
+        @controller.response = @response
+        @controller.send(:initialize_template_class, @response)
+        @controller.send(:assign_shortcuts, @request, @response)
+        @controller.send(:default_url_options).merge!(DefaultUrlOptions) if defined?(DefaultUrlOptions)
+        default_url_options[:protocol] = @controller.request.protocol
+        default_url_options[:host] = @controller.request.host
+        default_url_options[:port] = @controller.request.port
+        @controller
+      end
+
+      include Rails.application.routes.url_helpers
+      include ActionView::Helpers
+
+      %w( render render_to_string ).each do |method|
+        module_eval <<-__
+          def #{ method }(*args, &block)
+            controller.#{ method }(*args, &block)
+          end
+        __
+      end
     end
   end
 
 # class/instance factory
 #
-#   Conducer.for(:events)
+#   conduer = Conducer.for(:events)
 #
-#   Conducer.for(Event){ has_one :location }
+#   conduer = Conducer.for(Event){ has_one :location }
 #
 #   conducer = Conducer.for(:events, controller)
 #
 #   conducer = Conducer.for(Event, controller)
 #
+#   class EventConducer < Conducer::Base; end
+#
+#   conducer = EventConducer.for(controller)
+#
   def for(*args, &block)
-    options = args.extract_options!.to_options!
-    first = args.shift
-    controller = args.shift
+    first = args.first
 
-    klass = class_for(first, options, &block)
-
-    if controller
-      klass.new().instance_eval do
-        instance = self
-        instance.controller = controller
-        instance.default_url_options[:protocol] = controller.request.protocol
-        instance.default_url_options[:host] = controller.request.host
-        instance.default_url_options[:port] = controller.request.port
-        instance
-      end
-    else
-      klass
+    case first
+      when String, Symbol, Class
+        first = args.shift
+        klass = class_for(first, &block)
+        klass.new(*args)
+      else
+        klass = self
+        klass.new(*args, &block)
     end
   end
 
@@ -92,7 +164,7 @@ module Conducer
 
     klasses[key] ||= (
       Class.new(base){
-        module_eval(&Conducer::Mixin)
+        #module_eval(&Conducer::Base::Methods)
 
         set_table_name(table_name)
 
@@ -110,54 +182,16 @@ module Conducer
     klass
   end
 
+# track sub-classes
+#
   def klasses
     @klasses ||= {}
   end
 
+# put yer conducer's here
+#
   def autoload_path
     File.join(Rails.root, 'app', 'conducers')
-  end
-
-  Mixin = lambda do
-    set_table_name(name.underscore.pluralize)
-
-    def controller
-      defined?(@controller) ? @controller : mock_controller!
-    end
-
-    def controller=(controller)
-      @controller = controller
-    end
-
-    %w( render render_to_string ).each do |method|
-      module_eval <<-__
-        def #{ method }(*args, &block)
-          controller.#{ method }(*args, &block)
-        end
-      __
-    end
-
-    include Rails.application.routes.url_helpers
-    include ActionView::Helpers
-
-# TODO - wtf - there must be an easier way....  please help.
-#
-    def mock_controller!
-      require 'action_dispatch/testing/test_request.rb'
-      require 'action_dispatch/testing/test_response.rb'
-      @store = ActiveSupport::Cache::MemoryStore.new
-      @controller = ApplicationController.new
-      @controller.perform_caching = true
-      @controller.cache_store = @store
-      @request = ActionDispatch::TestRequest.new
-      @response = ActionDispatch::TestResponse.new
-      @controller.request = @request
-      @controller.response = @response
-      @controller.send(:initialize_template_class, @response)
-      @controller.send(:assign_shortcuts, @request, @response)
-      @controller.send(:default_url_options).merge!(DefaultUrlOptions) if defined?(DefaultUrlOptions)
-      @controller
-    end
   end
 
   extend(self)
@@ -188,7 +222,7 @@ end
     (Rails.configuration.autoload_paths += [Conducer.autoload_path]).uniq! unless Rails.configuration.autoload_paths.frozen?
   end
 
-# protect against rails' reloading
+# protect against rails' too clever reloading
 #
   if defined?(Rails)
     unloadable(Conducer)
