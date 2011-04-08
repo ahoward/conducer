@@ -14,6 +14,16 @@
 #
 #   @event = Conducer.for(:events).create!(params[:event])
 #
+
+## in app/conducers/event_conducer.rb
+#
+#   class CommentConducer < Conducer::Base
+#     belongs_to :post
+#   
+#     def link_to_post
+#       link_to('post', post)
+#     end
+#   end
  
 ## in a view
 #
@@ -24,17 +34,51 @@
 
 
 module Conducer
-# version
+## version
 #
   Conducer::VERSION = '0.0.2'
 
-  def Conducer.version() Conducer::VERSION end
+  def Conducer.version
+    Conducer::VERSION
+  end
 
-# base class
+## module methods
+#
+  class << Conducer
+  ## include the ability to track the current controller - hook into this like so
+  #
+  # class ApplicationController
+  #   before_filter do |controller|
+  #     Conducer.controller = controller
+  #   end
+  # end
+  #
+    attr_accessor :controller
+
+    def mock_controller
+      require 'action_dispatch/testing/test_request.rb'
+      require 'action_dispatch/testing/test_response.rb'
+      store = ActiveSupport::Cache::MemoryStore.new
+      controller = ApplicationController.new
+      controller.perform_caching = true
+      controller.cache_store = store
+      request = ActionDispatch::TestRequest.new
+      response = ActionDispatch::TestResponse.new
+      controller.request = request
+      controller.response = response
+      controller.send(:initialize_template_class, response)
+      controller.send(:assign_shortcuts, request, response)
+      controller.send(:default_url_options).merge!(DefaultUrlOptions) if defined?(DefaultUrlOptions)
+      controller
+    end
+  end
+
+
+## the conducer base class and mixin
 #
   class Base < (defined?(::ActiveRecord::Base) ? ::ActiveRecord::Base : Object)
     def Base.inherited(other, &block)
-      other.module_eval(&::Conducer::Base::Methods)
+      other.module_eval(&::Conducer::Base::Mixin)
       super
     end
 
@@ -42,23 +86,56 @@ module Conducer
       new(controller, *args, &block)
     end
 
-  # mixin used when building a conducer class
+  ## mixin used when building a conducer class
   #
-    Methods = lambda do
-      table_name = name.sub(/Conducer$/, '').underscore.pluralize
-      set_table_name table_name
+    Mixin = lambda do
+      class << self
+        def name
+          @name ||= super
+        end
+
+        def name=(name)
+          @name = name.to_s
+        end
+
+        def model_name
+          @model_name ||= super
+        end
+
+        def model_name=(model_name)
+          klass = self.dup
+          klass.name = model_name.to_s
+          @model_name = ActiveModel::Name.new(klass)
+        end
+
+        def table_name
+          super
+        end
+
+        def table_name=(table_name)
+          set_table_name(table_name)
+        end
+
+        def conducer_key
+          @conducer_key ||= name
+        end
+
+        def conducer_key=(conducer_key)
+          @conducer_key = conducer_key.to_s
+        end
+      end
+
+    ## support for conducers, located in app/conducers/*, with names like PostConducer
+    #
+      if name =~ /^(.*)Conducer$/
+        self.model_name = $1
+        self.table_name = model_name.underscore.pluralize
+      end
 
       def initialize(*args, &block)
         controllers, args = args.partition{|arg| arg.is_a?(ActionController::Base)}
-
         super(*args, &block)
-
-        unless controllers.blank?
-          controller = controllers.shift
-          self.controller = controller
-        else
-          mock_controller!
-        end
+        self.controller = controllers.shift || Conducer.controller || Conducer.mock_controller
       end
 
       def controller
@@ -73,33 +150,16 @@ module Conducer
         default_url_options[:port] = @controller.request.port
       end
 
-    ## TODO - wtf - there must be an easier way....  please help.
-    #
-      def mock_controller!
-        require 'action_dispatch/testing/test_request.rb'
-        require 'action_dispatch/testing/test_response.rb'
-        @store = ActiveSupport::Cache::MemoryStore.new
-        @controller = ApplicationController.new
-        @controller.perform_caching = true
-        @controller.cache_store = @store
-        @request = ActionDispatch::TestRequest.new
-        @response = ActionDispatch::TestResponse.new
-        @controller.request = @request
-        @controller.response = @response
-        @controller.send(:initialize_template_class, @response)
-        @controller.send(:assign_shortcuts, @request, @response)
-        @controller.send(:default_url_options).merge!(DefaultUrlOptions) if defined?(DefaultUrlOptions)
-        default_url_options[:protocol] = @controller.request.protocol
-        default_url_options[:host] = @controller.request.host
-        default_url_options[:port] = @controller.request.port
-        @controller
-      end
-
       include Rails.application.routes.url_helpers
       include ActionView::Helpers
 
-      %w( render render_to_string ).each do |method|
-        module_eval <<-__
+      delegates = %w(
+        render
+        render_to_string
+      )
+
+      delegates.each do |method|
+        module_eval <<-__, __FILE__, __LINE__
           def #{ method }(*args, &block)
             controller.#{ method }(*args, &block)
           end
@@ -136,7 +196,8 @@ module Conducer
     end
   end
 
-# class factory
+# class factory - used to build a conducer class around an existing class or
+# against a particular table_name
 #
   def class_for(*args, &block)
     options = args.extract_options!.to_options!
@@ -148,7 +209,7 @@ module Conducer
         table_name = first.to_s
         class_name = table_name.camelize.singularize
         model_name = class_name
-        key = table_name
+        conducer_key = table_name
 
       when Class
         raise(ArgumentError, first.name) unless first < ActiveRecord::Base
@@ -156,39 +217,35 @@ module Conducer
         table_name = base.table_name
         class_name = base.name
         model_name = base.model_name
-        key = class_name
+        conducer_key = class_name
 
       else
         raise(ArgumentError, first.name)
     end
 
-    klasses[key] ||= (
+    cache[conducer_key] ||= (
       Class.new(base){
-        #module_eval(&Conducer::Base::Methods)
+        module_eval(&Conducer::Base::Mixin)
 
-        set_table_name(table_name)
-
-        singleton_class = class << self; self; end
-        singleton_class.module_eval do
-          define_method(:name){ class_name }
-          define_method(:model_name){ model_name }
-          define_method(:conducer_key){ key }
-        end
+        self.name = class_name
+        self.table_name = table_name
+        self.model_name = model_name
+        self.conducer_key = conducer_key
       }
     )
 
-    klass = klasses[key]
-    klass.module_eval(&block) if block
-    klass
+    conducer = cache[conducer_key]
+    conducer.module_eval(&block) if block
+    conducer
   end
 
 # track sub-classes
 #
-  def klasses
-    @klasses ||= {}
+  def cache
+    @cache ||= {}
   end
 
-# put yer conducer's here
+# put yer conducers in app/conducers/foo_conducer.rb... 
 #
   def autoload_path
     File.join(Rails.root, 'app', 'conducers')
