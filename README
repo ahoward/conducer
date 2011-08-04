@@ -7,16 +7,3 @@ DESCRIPTION
 
   a model+view component for rails that combines the conductor and presenter
   pattern via a model capable of generating view-centric methods
-
-
-  in a controller
-
-    @event = Conducer.for(:events).create!(params[:event])
-
-
-  in a view
-
-    @event.link_to(:next, @event.next_event)
-
-    @event.render(:partial => 'shared/event', @event.attributes)
-
