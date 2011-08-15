@@ -12,18 +12,20 @@ Testing Conducer::Base do
       assert{
         new_foo_conducer_class do
           validates_presence_of :bar
-          validates_presence_of 'foo.bar'
+          validates_presence_of :foo, :bar 
         end
       }
 
     o = assert{ c.new }
+# TODO
+o.valid?
     assert{ !o.valid? }
-    assert{ !Array(o.errors['bar']).empty? }
-    assert{ !Array(o.errors['foo.bar']).empty? }
+    assert{ !Array(o.errors.get(:bar)).empty? }
+    assert{ !Array(o.errors.get(:foo, :bar)).empty? }
 
     o.attributes.set :foo, :bar, 42
     assert{ !o.valid? }
-    assert{ Array(o.errors['foo.bar']).empty? }
+    assert{ Array(o.errors.get(:foo, :bar)).empty? }
   end
 
 ##
@@ -44,24 +46,92 @@ Testing Conducer::Base do
 
 ##
 #
-  testing 'that a conducers support basic CRUD' do
-    o = new_foo_conducer(:k => :v)
+  context 'class interface' do
+    testing '.new' do
+      c = assert{ new_foo_conducer_class }
+      controller = assert{ Conducer.mock_controller }
 
-  # create
-    id = assert{ o.save }
-    assert{ db.foos.find(id)[:k] == o.attributes[:k] }
-    assert{ id == o.id }
+      check = proc do |args|
+        params = args.detect{|arg| arg.is_a?(Hash)} || {}
+        o = assert{ c.new(*args) }
+        assert{ o.is_a?(Conducer::Base) }
+        assert{ o.attributes =~ params }
+        assert{ o.controller.is_a?(ActionController::Base) }
+      end
 
-  # update
-    t = Time.now
-    assert{ o.update_attributes :t => t }
-    assert{ o.save }
-    assert{ o.reload }
-    assert{ o.attributes.t == t }
+      [
+        {},
+        {:k => :v},
+        nil,
+      ].each do |params|
+        check[ [params] ]
+        check[ [controller, params] ]
+        check[ [params, controller] ]
+      end
+    end
 
-  # destroy
-    assert{ o.destroy }
-    assert{ db.foos.find(id).nil? }
+    testing '.all' do
+      c = assert{ new_foo_conducer_class }
+      assert{ c.all().is_a?(Array) }
+      assert{ c.all(nil).is_a?(Array) }
+      assert{ c.all({}).is_a?(Array) }
+    end
+
+    testing '.find' do
+      c = assert{ new_foo_conducer_class }
+      o = assert{ c.new }
+      assert{ c.find(o.id).is_a?(Conducer::Base) }
+    end
+
+    testing '.model_name' do
+      c = assert{ new_foo_conducer_class }
+      assert{ c.model_name }
+      o = assert{ c.new } 
+      assert{ o.model_name }
+    end
+  end
+
+  context 'instance interface' do
+    testing '#save' do
+      params = {:k => :v}
+      o = assert{ new_foo_conducer(params) }
+      assert{ o.save }
+      id = assert{ o.id }
+      assert{ db.foos.find(id)[:k] == o.attributes[:k] }
+      assert{ id == o.id }
+      assert{ o.attributes =~ params.merge(:id => id) }
+    end
+
+    testing '#update_attributes' do
+      params = {:k => :v}
+      o = assert{ new_foo_conducer(params) }
+      t = Time.now
+      assert{ o.update_attributes :t => t }
+      assert{ o.save }
+      id = assert{ o.id }
+      assert{ db.foos.find(id).id == o.id }
+      assert{ db.foos.find(id) =~ params.merge(:id => id, :t => t) }
+    end
+
+    testing '#destroy' do
+      params = {:k => :v}
+      o = assert{ new_foo_conducer(params) }
+      assert{ o.save }
+      id = assert{ o.id }
+      assert{ db.foos.find(id).id == o.id }
+      assert{ o.destroy }
+      assert{ db.foos.find(id).nil? }
+    end
+
+    testing '#to_param' do
+      o = assert{ new_foo_conducer() }
+      assert{ o.to_param }
+    end
+
+    testing '#errors' do
+      o = assert{ new_foo_conducer() }
+      assert{ o.errors.is_a?(Hash) }
+    end
   end
 
   
@@ -69,7 +139,7 @@ Testing Conducer::Base do
 protected
   def new_foo_conducer_class(&block)
     name = 'FooConducer'
-    c = assert{ Class.new(Conducer::Base){ self.name = name } }
+    c = assert{ Class.new(Conducer::Base){ self.name = name; crud! } }
     assert{ c.name == 'FooConducer' }
     assert{ c.model_name == 'Foo' }
     assert{ c.table_name == 'foos' && c.collection_name == 'foos' }

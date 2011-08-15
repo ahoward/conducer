@@ -3,7 +3,24 @@ NAME
 
 DESCRIPTION
 
-  conduce: be conducive to; "The use of computers in the classroom lead to better writing"
+  conduce: be conducive to;
+    "The use of computers in the classroom lead to better writing"
 
   a model+view component for rails that combines the conductor and presenter
   pattern via a model capable of generating view-centric methods
+
+
+  - interface (test this!)
+      model  = Model.new(params = {})        # build one
+      models = Model.all(params = {})        # search for all
+      model  = Model.find(id_or_params = {}) # search for one
+
+
+      model.id                               #
+      model.model_name                       # for routes
+      model.to_param                         # for routes
+      model.errors                           # via 'a.b.c' paths....
+
+      model.save                             #=> true | false
+      model.update_attributes(params = {})   #=> true | false
+      model.destroy                          #=> true | false

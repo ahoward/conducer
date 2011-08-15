@@ -85,9 +85,13 @@
   #rails.rb
 
   Conducer.load %w[
+    exceptions.rb
+    instance_exec.rb
     support.rb
     attributes.rb
     form.rb
+    validations.rb
+    errors.rb
     base.rb
     db.rb
     crud.rb
@@ -103,5 +107,6 @@
       require 'active_support/dependencies'
     end
     unloadable(Conducer)
-    BEGIN { Object.send(:remove_const, :Conducer) if defined?(Conducer) }
   end
+
+  BEGIN{ Object.send(:remove_const, :Conducer) if defined?(Conducer) }

@@ -4,6 +4,14 @@
     module CRUD
       Code = proc do
         class << self
+          def db
+            Db.instance
+          end
+
+          def collection
+            db[collection_name]
+          end
+
           def all(*args)
             hashes = collection.all()
             hashes.map{|hash| new(hash)}
@@ -12,14 +20,6 @@
           def find(id)
             hash = collection.find(id)
             new(hash) if hash
-          end
-
-          def db
-            Db.instance
-          end
-
-          def collection
-            db[collection_name]
           end
         end
 
@@ -34,12 +34,26 @@
           save
         end
 
-        def save
-          id = self.class.collection.save(@attributes)
-          @attributes.set(:id => id)
-          id
+        def save(options = {})
+          options.to_options!
+          run_callbacks :save do
+            unless valid?
+              if options[:raise]
+                raise!(:validation_error)
+              else
+                return(false)
+              end
+            end
+            id = self.class.collection.save(@attributes)
+            @attributes.set(:id => id)
+            true
+          end
         ensure
           @new_record = false
+        end
+
+        def save!
+          save(:raise => true)
         end
 
         def destroy
@@ -72,4 +86,16 @@
     end
   end
 
-  Conducer::Base.send(:include, Conducer::CRUD)
+## dsl for auto-crud
+#
+  module Conducer
+    class Base
+      class << self
+        def crud
+          include(Conducer::CRUD)
+        end
+        alias_method('crud!', 'crud')
+      end
+    end
+  end
+  #Conducer::Base.send(:include, Conducer::CRUD)

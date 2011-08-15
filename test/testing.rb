@@ -66,11 +66,9 @@ def Testing(*args, &block)
 
   ## configure the subclass!
   #
-    @@testing_subclass_count = '0' unless defined?(@@testing_subclass_count) 
-    @@testing_subclass_count
-    @@testing_subclass_count.succ!
+    const_set(:Testno, '0')
     slug = slug_for(*args).gsub(%r/-/,'_')
-    name = ['TESTING', '%03d' % @@testing_subclass_count, slug].delete_if{|part| part.empty?}.join('_')
+    name = ['TESTING', '%03d' % const_get(:Testno), slug].delete_if{|part| part.empty?}.join('_')
     name = name.upcase!
     const_set(:Name, name)
     const_set(:Missing, Object.new.freeze)

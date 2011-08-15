@@ -264,11 +264,12 @@ module Conducer
       klass
     end
 
-# FIXME - this key inversion needs to be abstracted!
-#
     def error_for(keys, klass = nil)
-      key = keys.flatten.join('.')
-      errors[key] if errors_on?(keys)
+      if errors_on?(keys)
+        title = Array(keys).join(' ').titleize
+        messages = Array(errors.get(keys)).join(', ')
+        "#{ title }: #{ messages }"
+      end
     end
 
     def value_for(map, keys)

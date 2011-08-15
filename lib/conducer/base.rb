@@ -2,20 +2,35 @@ module Conducer
   class Base
   ##
   #      
-    extend ActiveModel::Callbacks
-    extend ActiveModel::Translation
 
-    include ActiveModel::Conversion
     include ActiveModel::Naming
-    include ActiveModel::AttributeMethods
-    include ActiveModel::Serialization
-    include ActiveModel::Dirty
-    include ActiveModel::MassAssignmentSecurity
-    include ActiveModel::Observing
+    include ActiveModel::Conversion
+
+    #extend ActiveModel::Translation
+    #include ActiveModel::AttributeMethods
+    #include ActiveModel::Serialization
+    #include ActiveModel::Dirty
+    #include ActiveModel::MassAssignmentSecurity
+    #include ActiveModel::Observing
+    #include ActiveModel::Serializers::JSON
+    #include ActiveModel::Serializers::Xml
+     
+    #include ActiveModel::Validations
+
+    extend ActiveModel::Callbacks
+
+    define_model_callbacks(:save, :create, :update, :destroy)
+    define_model_callbacks(:reset, :initialize, :find, :touch)
     include ActiveModel::Validations::Callbacks
-    include ActiveModel::Serializers::JSON
-    include ActiveModel::Serializers::Xml
-    include ActiveModel::Validations
+
+  ##
+  #
+    include Conducer::Validations
+
+  ##
+  #
+    class Error < ::StandardError; end
+    class Error::Validation < Error; end
 
   ## class_methods
   #
@@ -57,11 +72,24 @@ module Conducer
       alias_method('collection_name=', 'table_name=')
 
       def controller
-        @controller ||= Conducer.controller
+        defined?(@controller) ? @controller : Conducer.controller
       end
 
       def controller=(controller)
         @controller = controller
+      end
+
+      def raise!(*args, &block)
+        kind = (args.first.is_a?(Symbol) ? args.shift : 'error').to_s.sub(/_error$/, '')
+
+        case kind
+          when /validation/ 
+            raise Error::Validation.new(*args, &block)
+          when /error/ 
+            raise Error.new(*args, &block)
+          else
+            raise Error.new(*args, &block)
+        end
       end
     end
 
@@ -70,36 +98,76 @@ module Conducer
     %w(
       name
       attributes
+      errors
+      validations
       form
       new_record
       destroyed
     ).each{|a| fattr(a)}
 
     def self.new(*args, &block)
-      conducer = allocate
-
-      controllers, args = args.partition{|arg| arg.is_a?(ActionController::Base)}
-      controller = controllers.shift #|| Conducer.controller || Conducer.mock_controller
-      #conducer.controller = controller
-
-      conducer.instance_eval do
-        @name = self.class.model_name.singular
-        @attributes = Attributes.new(self)
-        @form = Form.new(self)
-
-        @new_record = false
-        @destroyed = false
+      allocate.tap do |conducer|
+        conducer.running_callbacks :reset, :initialize do
+          conducer.send(:reset, *args, &block)
+          conducer.send(:initialize, *args, &block)
+        end
       end
-
-      conducer.send(:initialize, *args, &block)
-
-      conducer
     end
 
-    def initialize(attributes = {})
-      attributes.each do |key, val|
-        @attributes.set(key_for(key) => val)
+    def self.create(*args, &block)
+      allocate.tap do |conducer|
+        conducer.running_callbacks :reset, :initialize, :create do
+          conducer.send(:reset, *args, &block)
+          conducer.send(:initialize, *args, &block)
+          return false unless conducer.save
+        end
       end
+    end
+
+    def self.create!(*args, &block)
+      allocate.tap do |conducer|
+        conducer.running_callbacks :reset, :initialize, :create do
+          conducer.send(:reset, *args, &block)
+          conducer.send(:initialize, *args, &block)
+          raise!(:validation_error) unless conducer.save
+        end
+      end
+    end
+
+    def running_callbacks(*args, &block)
+      which = args.shift
+      if args.empty?
+        run_callbacks(which, &block)
+      else
+        run_callbacks(which){ running_callbacks(*args, &block) }
+      end
+    end
+
+    def reset(*args, &block)
+      controllers, args = args.partition{|arg| arg.is_a?(ActionController::Base)}
+      hashes, args = args.partition{|arg| arg.is_a?(Hash)}
+
+      @name = self.class.model_name.singular
+      @attributes = Attributes.new(self)
+      @errors = Errors.new(self)
+      @form = Form.new(self)
+
+      @new_record = false
+      @destroyed = false
+
+      controller = controllers.shift || Conducer.controller || Conducer.mock_controller
+      self.controller = controller
+
+      hashes.each do |hash|
+        hash.each do |key, val|
+          @attributes.set(key_for(key) => val)
+        end
+      end
+
+      self
+    end
+
+    def initialize(*args, &block)
     end
 
   ## instance_methods
@@ -213,6 +281,10 @@ module Conducer
 
     def form
       @form
+    end
+
+    def raise!(*args, &block)
+      self.class.raise!(*args, &block)
     end
   end
 end
