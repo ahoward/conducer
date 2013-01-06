@@ -587,6 +587,7 @@ class Conducer
 end
 
 
+__END__
 
 if $0 == __FILE__
 
@@ -606,3 +607,30 @@ if $0 == __FILE__
 
 end
 
+
+if $0 == __FILE__
+  require 'lib/conducer'
+
+  load 'vendor/bundle/ruby/1.9.1/gems/mongoid-3.0.14/lib/mongoid/relations/metadata.rb'
+
+  O = Conducer.for(Observation) do
+    belongs_to(:farm, :class_name => '::F', :inverse_class_name => '::Observation')
+  end
+
+  p O
+
+  F = Conducer.for(Farm) do
+    def url
+      helper.url_for(self)
+    end
+
+    has_many(:observations, :class_name => '::O', :inverse_class_name => '::Farm')
+  end
+
+  f = F.first
+
+  p f.title
+  p f.url
+  p f.observations.first.class.name
+  p f.observations.first.farm.class.name
+end
